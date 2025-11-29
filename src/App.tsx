@@ -1,0 +1,402 @@
+import React, { useState, useEffect } from "react";
+import { FileText, Database, Search, Play, RotateCcw, Save } from "lucide-react";
+import { FileUpload } from "./components/FileUpload";
+import { ResultCard } from "./components/ResultCard";
+import { processASOWithGemini } from "./services/geminiService";
+import { parseExcelAndFindEmployee } from "./services/excelService";
+import { saveExcelFile, getExcelFile } from "./services/storageService";
+import { normalizeText, normalizeNumber, normalizeCargo, parseDateString } from "./utils/normalization";
+import { AppState } from "./types";
+import type { ASOData, ExcelData, ValidationResult } from "./types";
+
+const App: React.FC = () => {
+  // Inputs
+  const [asoPdf, setAsoPdf] = useState<File | null>(null);
+  const [excelFile, setExcelFile] = useState<File | null>(null);
+  const [employeeCode, setEmployeeCode] = useState("");
+  const [isExcelSaved, setIsExcelSaved] = useState(false);
+
+  // State
+  const [appState, setAppState] = useState<AppState>(AppState.IDLE);
+  const [statusMessage, setStatusMessage] = useState("");
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
+  const [rawGeminiData, setRawGeminiData] = useState<ASOData | null>(null);
+
+  // Load saved excel on mount
+  useEffect(() => {
+    const loadPersistence = async () => {
+      const saved = await getExcelFile();
+      if (saved) {
+        setExcelFile(saved);
+        setIsExcelSaved(true);
+      }
+    };
+    loadPersistence();
+  }, []);
+
+  const handleExcelSelect = async (file: File) => {
+    setExcelFile(file);
+    setIsExcelSaved(true);
+    try {
+      await saveExcelFile(file);
+    } catch (e) {
+      console.error("Failed to auto-save excel", e);
+    }
+  };
+
+  const reset = () => {
+    setAppState(AppState.IDLE);
+    setValidationResult(null);
+    setRawGeminiData(null);
+    setStatusMessage("");
+    setAsoPdf(null); // Clear previous PDF
+  };
+
+  const handleProcess = async () => {
+    if (!asoPdf || !excelFile || !employeeCode) {
+      alert("Please fill in all fields.");
+      return;
+    }
+
+    try {
+      setAppState(AppState.PROCESSING);
+
+      // 1. Process Excel
+      setStatusMessage("Scanning Excel database...");
+      const excelData = await parseExcelAndFindEmployee(excelFile, employeeCode);
+
+      if (!excelData) {
+        throw new Error(`Employee code '${employeeCode}' not found in the Excel file.`);
+      }
+
+      // 2. Process PDF with Gemini
+      setStatusMessage("Analyzing PDF with Gemini AI...");
+      // Use import.meta.env.VITE_API_KEY for Vite
+      const apiKey = import.meta.env.VITE_API_KEY;
+      if (!apiKey) {
+        throw new Error("API Key not found. Please set VITE_API_KEY in .env file.");
+      }
+      const pdfData = await processASOWithGemini(apiKey, asoPdf);
+      setRawGeminiData(pdfData);
+
+      // 3. Validation Logic
+      setStatusMessage("Validating data...");
+      validateData(pdfData, excelData);
+
+      setAppState(AppState.SUCCESS);
+    } catch (error: any) {
+      console.error(error);
+      setAppState(AppState.ERROR);
+      setStatusMessage(error.message || "An unexpected error occurred.");
+    }
+  };
+
+  const validateData = (pdf: ASOData, excel: ExcelData) => {
+    const pdfNameNorm = normalizeText(pdf.nome);
+    const pdfCpfNorm = normalizeNumber(pdf.cpf);
+    const pdfCargoNorm = normalizeCargo(pdf.cargo);
+
+    const baseNameNorm = normalizeText(excel.nome);
+    const baseCpfNorm = normalizeNumber(excel.cpf);
+    const baseCargoNorm = normalizeCargo(excel.cargo);
+
+    // Aptitude Logic
+    const aptFlags = pdf.aptidoes;
+    const aptitudeErrors: string[] = [];
+    if (!aptFlags.funcao) aptitudeErrors.push("Inapto: Função");
+    if (!aptFlags.altura) aptitudeErrors.push("Inapto: Altura");
+    if (!aptFlags.espacoConfinado) aptitudeErrors.push("Inapto: Espaço Confinado");
+    if (!aptFlags.eletricidade) aptitudeErrors.push("Inapto: Eletricidade");
+
+    // Date Validation Logic
+    // Rule: Date must be within the last 1 year from today.
+    let dateValid = false;
+    let dateMsg = "Date missing or not found";
+    const rawDate = pdf.assinaturas.data;
+
+    if (rawDate) {
+      const parsedDate = parseDateString(rawDate);
+      if (parsedDate) {
+        const today = new Date();
+        const oneYearAgo = new Date();
+        oneYearAgo.setFullYear(today.getFullYear() - 1);
+
+        // Reset time for fair date comparison
+        today.setHours(0, 0, 0, 0);
+        oneYearAgo.setHours(0, 0, 0, 0);
+        parsedDate.setHours(0, 0, 0, 0);
+
+        if (parsedDate >= oneYearAgo) {
+          dateValid = true;
+          dateMsg = `${rawDate}`;
+        } else {
+          dateMsg = `${rawDate} (Expired / Old)`;
+        }
+      } else {
+        dateMsg = `${rawDate} (Invalid Format)`;
+      }
+    }
+
+    const result: ValidationResult = {
+      nome: {
+        ok: pdfNameNorm === baseNameNorm,
+        msg: pdfNameNorm === baseNameNorm ? "Match" : "Mismatch",
+        pdfVal: pdf.nome || "(Empty)",
+        baseVal: excel.nome,
+      },
+      cpf: {
+        ok: pdfCpfNorm === baseCpfNorm,
+        msg: pdfCpfNorm === baseCpfNorm ? "Match" : "Mismatch",
+        pdfVal: pdf.cpf || "(Empty)",
+        baseVal: excel.cpf,
+      },
+      cargo: {
+        ok: pdfCargoNorm === baseCargoNorm,
+        msg: pdfCargoNorm === baseCargoNorm ? "Match" : "Mismatch",
+        pdfVal: pdf.cargo || "(Empty)",
+        baseVal: excel.cargo,
+      },
+      aptidao: {
+        ok: aptitudeErrors.length === 0,
+        msg: aptitudeErrors.length === 0 ? "All Clear" : "Issues Found",
+        failedFields: aptitudeErrors,
+      },
+      assinaturas: {
+        medico: pdf.assinaturas.medico,
+        tecnico: pdf.assinaturas.tecnico,
+        data: {
+          valid: dateValid,
+          value: rawDate,
+          msg: dateMsg
+        }
+      },
+    };
+
+    setValidationResult(result);
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-800 pb-20">
+      {/* Header */}
+      <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
+        <div className="max-w-5xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="bg-blue-600 p-2 rounded-lg">
+              <FileText className="text-white w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-slate-900">ASO Validator AI</h1>
+              <p className="text-xs text-slate-500">Automated Document Compliance</p>
+            </div>
+          </div>
+          {appState === AppState.SUCCESS && (
+            <button
+              onClick={reset}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+            >
+              <RotateCcw className="w-4 h-4" />
+              New Validation
+            </button>
+          )}
+        </div>
+      </header>
+
+      <main className="max-w-5xl mx-auto px-6 py-8">
+        {/* Step 1: Configuration & Inputs */}
+        <div className={`grid grid-cols-1 lg:grid-cols-3 gap-8 ${appState === AppState.SUCCESS ? 'hidden lg:grid' : ''}`}>
+
+          {/* Left Column: Inputs */}
+          <div className="lg:col-span-1 space-y-6">
+
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <Database className="w-5 h-5 text-blue-600" />
+                Reference Data
+              </h2>
+              <div className="space-y-4">
+                <div>
+                  <FileUpload
+                    label="Training Control Excel"
+                    accept=".xlsx, .xls"
+                    file={excelFile}
+                    onFileSelect={handleExcelSelect}
+                    icon={<Database className="w-8 h-8 text-slate-400 mb-2" />}
+                  />
+                  {isExcelSaved && excelFile && (
+                    <div className="flex items-center gap-1.5 mt-2 text-xs text-emerald-600 font-medium">
+                      <Save className="w-3 h-3" />
+                      Saved to browser storage
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Employee Code (Column C)</label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
+                    <input
+                      type="text"
+                      value={employeeCode}
+                      onChange={(e) => setEmployeeCode(e.target.value)}
+                      placeholder="e.g. BR001"
+                      className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm uppercase"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Center Column: PDF Upload */}
+          <div className="lg:col-span-2 flex flex-col h-full">
+            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex-1 flex flex-col">
+              <h2 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <FileText className="w-5 h-5 text-blue-600" />
+                Document Input
+              </h2>
+              <div className="flex-1 flex flex-col justify-center">
+                <FileUpload
+                  label="Upload ASO (PDF)"
+                  accept=".pdf"
+                  file={asoPdf}
+                  onFileSelect={setAsoPdf}
+                />
+              </div>
+
+              <div className="mt-6 pt-6 border-t border-slate-100">
+                <button
+                  onClick={handleProcess}
+                  disabled={appState === AppState.PROCESSING}
+                  className={`w-full py-3 px-6 rounded-lg font-semibold text-white shadow-md flex items-center justify-center gap-2 transition-all
+                    ${appState === AppState.PROCESSING
+                      ? 'bg-slate-400 cursor-not-allowed'
+                      : 'bg-blue-600 hover:bg-blue-700 hover:shadow-lg'}`}
+                >
+                  {appState === AppState.PROCESSING ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-5 h-5 fill-current" />
+                      Run Validation
+                    </>
+                  )}
+                </button>
+                {statusMessage && (
+                  <p className="text-center text-sm text-slate-500 mt-3 animate-pulse">
+                    {statusMessage}
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Results Section */}
+        {appState === AppState.SUCCESS && validationResult && (
+          <div className="mt-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-slate-800">Validation Results</h2>
+              <div className="text-sm text-slate-500">
+                Comparing <span className="font-semibold text-slate-700">{asoPdf?.name}</span> vs Database
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+              {/* 1. Name Validation */}
+              <ResultCard
+                title="Employee Name"
+                status={validationResult.nome.ok ? "success" : "error"}
+                message={validationResult.nome.msg}
+                details={[
+                  { label: "PDF", value: validationResult.nome.pdfVal },
+                  { label: "Base", value: validationResult.nome.baseVal }
+                ]}
+              />
+
+              {/* 2. CPF Validation */}
+              <ResultCard
+                title="CPF Document"
+                status={validationResult.cpf.ok ? "success" : "error"}
+                message={validationResult.cpf.msg}
+                details={[
+                  { label: "PDF", value: validationResult.cpf.pdfVal },
+                  { label: "Base", value: validationResult.cpf.baseVal }
+                ]}
+              />
+
+              {/* 3. Role Validation */}
+              <ResultCard
+                title="Job Role / Cargo"
+                status={validationResult.cargo.ok ? "success" : "error"}
+                message={validationResult.cargo.msg}
+                details={[
+                  { label: "PDF", value: validationResult.cargo.pdfVal },
+                  { label: "Base", value: validationResult.cargo.baseVal }
+                ]}
+              />
+
+              {/* 4. Aptitude Flags */}
+              <ResultCard
+                title="Health Aptitude"
+                status={validationResult.aptidao.ok ? "success" : "error"}
+                message={validationResult.aptidao.ok ? "Fully Fit / Apto" : "Unfit / Inapto Detected"}
+                details={!validationResult.aptidao.ok ? validationResult.aptidao.failedFields.map(f => ({ label: "Issue", value: f })) : undefined}
+              />
+
+              {/* 5. Signatures */}
+              <div className="col-span-1 md:col-span-2 grid grid-cols-3 gap-4">
+                <ResultCard
+                  title="Physician Sign."
+                  status={validationResult.assinaturas.medico ? "success" : "error"}
+                  message={validationResult.assinaturas.medico ? "Detected" : "Missing"}
+                />
+                <ResultCard
+                  title="Employee Sign."
+                  status={validationResult.assinaturas.tecnico ? "success" : "error"}
+                  message={validationResult.assinaturas.tecnico ? "Detected" : "Missing"}
+                />
+                <ResultCard
+                  title="Date Field"
+                  status={validationResult.assinaturas.data.valid ? "success" : "error"}
+                  message={validationResult.assinaturas.data.msg}
+                />
+              </div>
+            </div>
+
+            {/* Raw Data Toggle (Optional) */}
+            <div className="mt-12 border-t pt-8">
+              <details className="group">
+                <summary className="flex items-center gap-2 cursor-pointer text-slate-500 hover:text-blue-600 transition-colors">
+                  <Database className="w-4 h-4" />
+                  <span className="text-sm font-medium">View Raw Extracted Data (JSON)</span>
+                </summary>
+                <pre className="mt-4 p-4 bg-slate-900 text-slate-50 rounded-lg overflow-auto text-xs font-mono max-h-60">
+                  {JSON.stringify(rawGeminiData, null, 2)}
+                </pre>
+              </details>
+            </div>
+          </div>
+        )}
+
+        {appState === AppState.ERROR && (
+          <div className="mt-8 p-6 bg-red-50 border border-red-200 rounded-xl text-center">
+            <h3 className="text-lg font-bold text-red-700 mb-2">Process Failed</h3>
+            <p className="text-red-600 mb-4">{statusMessage}</p>
+            <button
+              onClick={() => setAppState(AppState.IDLE)}
+              className="px-4 py-2 bg-white border border-red-300 text-red-700 rounded-md hover:bg-red-50 transition-colors"
+            >
+              Try Again
+            </button>
+          </div>
+        )}
+      </main>
+    </div>
+  );
+};
+
+export default App;
