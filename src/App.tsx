@@ -238,8 +238,15 @@ const App: React.FC = () => {
                   <FileUpload
                     label="Training Control Excel"
                     accept=".xlsx, .xls"
-                    file={excelFile}
-                    onFileSelect={handleExcelSelect}
+                    files={excelFile ? [excelFile] : []}
+                    onFilesChange={(files) => {
+                      if (files.length > 0) handleExcelSelect(files[0]);
+                      else {
+                        setExcelFile(null);
+                        setIsExcelSaved(false);
+                      }
+                    }}
+                    multiple={false}
                     icon={<Database className="w-8 h-8 text-slate-400 mb-2" />}
                   />
                   {isExcelSaved && excelFile && (
@@ -287,8 +294,9 @@ const App: React.FC = () => {
                 <FileUpload
                   label="Upload ASO (PDF)"
                   accept=".pdf"
-                  file={asoPdfs[0] || null}
-                  onFileSelect={(file) => setAsoPdfs(prev => [...prev, file])}
+                  files={asoPdfs}
+                  onFilesChange={setAsoPdfs}
+                  multiple={true}
                 />
               </div>
 
