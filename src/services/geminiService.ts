@@ -14,30 +14,69 @@ const fileToBase64 = (file: File): Promise<string> => {
     });
 };
 
-// Debug function to list available models
-const listAvailableModels = async (apiKey: string) => {
+// Helper to fetch actual available models from the API
+const getValidModelName = async (apiKey: string): Promise<string> => {
     try {
         const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
         if (!response.ok) {
-            console.error("Failed to list models:", await response.text());
-            return;
+            console.warn("Failed to list models, defaulting to gemini-1.5-flash");
+            return "gemini-1.5-flash";
         }
+
         const data = await response.json();
-        console.log("Available Models for this key:", data.models?.map((m: any) => m.name));
+        const models = data.models || [];
+
+        // Log available models for debugging
+        console.log("Available models from API:", models.map((m: any) => m.name));
+
+        // Filter for models that support generateContent
+        const generateModels = models.filter((m: any) =>
+            m.supportedGenerationMethods?.includes("generateContent")
+        );
+
+        // Strategy: Prefer Flash 1.5 -> Pro 1.5 -> Pro 1.0 -> Any
+        const preferences = [
+            "gemini-1.5-flash",
+            "gemini-1.5-pro",
+            "gemini-1.0-pro",
+            "gemini-pro"
+        ];
+
+        for (const pref of preferences) {
+            const match = generateModels.find((m: any) =>
+                m.name === `models/${pref}` || m.name === pref
+            );
+            if (match) {
+                console.log(`Selected preferred model: ${match.name}`);
+                // Remove 'models/' prefix if present, although SDK handles it, it's safer to be clean
+                return match.name.replace("models/", "");
+            }
+        }
+
+        // If no preference found, take the first one that looks like a gemini model
+        const fallback = generateModels.find((m: any) => m.name.includes("gemini"));
+        if (fallback) {
+            console.log(`Selected fallback model: ${fallback.name}`);
+            return fallback.name.replace("models/", "");
+        }
+
+        return "gemini-1.5-flash"; // Ultimate fallback
     } catch (e) {
-        console.error("Error listing models:", e);
+        console.error("Error selecting model:", e);
+        return "gemini-1.5-flash";
     }
 };
 
 export const processASOWithGemini = async (apiKey: string, file: File): Promise<ASOData> => {
     const cleanKey = apiKey.trim();
-    console.log(`Using API Key: ${cleanKey.substring(0, 5)}...${cleanKey.substring(cleanKey.length - 3)}`);
-
-    // Check what models are actually visible to this key
-    await listAvailableModels(cleanKey);
-
     const genAI = new GoogleGenerativeAI(cleanKey);
     const base64Data = await fileToBase64(file);
+
+    // Dynamically select the best available model
+    const modelName = await getValidModelName(cleanKey);
+    console.log(`Initializing SDK with model: ${modelName}`);
+
+    const model = genAI.getGenerativeModel({ model: modelName });
 
     const prompt = `
     Analyze this ASO (Occupational Health Certificate) document and extract the following information in JSON format:
@@ -58,51 +97,26 @@ export const processASOWithGemini = async (apiKey: string, file: File): Promise<
     Return ONLY the JSON object, no markdown formatting.
   `;
 
-    // List of models to try in order of preference
-    const modelsToTry = [
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-001",
-        "gemini-1.5-flash-002",
-        "gemini-1.5-pro",
-        "gemini-1.5-pro-001",
-        "gemini-1.5-pro-002",
-        "gemini-pro", // Fallback to 1.0 Pro
-        "gemini-1.0-pro"
-    ];
-
-    let lastError: any;
-
-    for (const modelName of modelsToTry) {
-        try {
-            console.log(`Attempting to generate content with model: ${modelName}`);
-            const model = genAI.getGenerativeModel({ model: modelName });
-
-            const result = await model.generateContent([
-                prompt,
-                {
-                    inlineData: {
-                        data: base64Data,
-                        mimeType: file.type
-                    }
+    try {
+        const result = await model.generateContent([
+            prompt,
+            {
+                inlineData: {
+                    data: base64Data,
+                    mimeType: file.type
                 }
-            ]);
+            }
+        ]);
 
-            const response = await result.response;
-            const textResponse = response.text();
+        const response = await result.response;
+        const textResponse = response.text();
 
-            // Clean up markdown code blocks if present
-            const jsonString = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+        const jsonString = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
 
-            return JSON.parse(jsonString) as ASOData;
+        return JSON.parse(jsonString) as ASOData;
 
-        } catch (e: any) {
-            console.warn(`Model ${modelName} failed:`, e.message);
-            lastError = e;
-            // Continue to next model
-        }
+    } catch (e: any) {
+        console.error("Gemini API Error:", e);
+        throw new Error(`Failed to process document. Model: ${modelName}. Error: ${e.message}`);
     }
-
-    // If we get here, all models failed
-    console.error("All models failed. Last error:", lastError);
-    throw new Error(`Failed to process document with any Gemini model. Last error: ${lastError?.message || "Unknown error"}`);
 };
