@@ -16,19 +16,7 @@ const fileToBase64 = (file: File): Promise<string> => {
 
 export const processASOWithGemini = async (apiKey: string, file: File): Promise<ASOData> => {
     const genAI = new GoogleGenerativeAI(apiKey);
-    // Trying gemini-1.5-pro as flash seems to be 404ing for this key
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
-
     const base64Data = await fileToBase64(file);
-
-    // Debug: List models if possible to see what's available
-    try {
-        // This is just for debugging in the console
-        const modelList = await genAI.getGenerativeModel({ model: "gemini-1.5-pro" }).countTokens("test");
-        console.log("API Connection OK, token count test:", modelList);
-    } catch (e) {
-        console.warn("API Check failed", e);
-    }
 
     const prompt = `
     Analyze this ASO (Occupational Health Certificate) document and extract the following information in JSON format:
@@ -49,26 +37,49 @@ export const processASOWithGemini = async (apiKey: string, file: File): Promise<
     Return ONLY the JSON object, no markdown formatting.
   `;
 
-    const result = await model.generateContent([
-        prompt,
-        {
-            inlineData: {
-                data: base64Data,
-                mimeType: file.type
-            }
+    // List of models to try in order of preference
+    const modelsToTry = [
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-001",
+        "gemini-1.5-flash-002",
+        "gemini-1.5-pro",
+        "gemini-1.5-pro-001",
+        "gemini-1.5-pro-002"
+    ];
+
+    let lastError: any;
+
+    for (const modelName of modelsToTry) {
+        try {
+            console.log(`Attempting to generate content with model: ${modelName}`);
+            const model = genAI.getGenerativeModel({ model: modelName });
+
+            const result = await model.generateContent([
+                prompt,
+                {
+                    inlineData: {
+                        data: base64Data,
+                        mimeType: file.type
+                    }
+                }
+            ]);
+
+            const response = await result.response;
+            const textResponse = response.text();
+
+            // Clean up markdown code blocks if present
+            const jsonString = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
+
+            return JSON.parse(jsonString) as ASOData;
+
+        } catch (e: any) {
+            console.warn(`Model ${modelName} failed:`, e.message);
+            lastError = e;
+            // Continue to next model
         }
-    ]);
-
-    const response = await result.response;
-    const textResponse = response.text();
-
-    // Clean up markdown code blocks if present
-    const jsonString = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
-
-    try {
-        return JSON.parse(jsonString) as ASOData;
-    } catch (e) {
-        console.error("Failed to parse Gemini response", textResponse);
-        throw new Error("Failed to parse AI response");
     }
+
+    // If we get here, all models failed
+    console.error("All models failed. Last error:", lastError);
+    throw new Error(`Failed to process document with any Gemini model. Last error: ${lastError?.message || "Unknown error"}`);
 };
