@@ -19,8 +19,8 @@ const App: React.FC = () => {
   // State
   const [appState, setAppState] = useState<AppState>(AppState.IDLE);
   const [statusMessage, setStatusMessage] = useState("");
-  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null);
-  const [rawGeminiData, setRawGeminiData] = useState<ASOData | null>(null);
+  const [validationResults, setValidationResults] = useState<ValidationResult[]>([]);
+  const [rawGeminiDataArray, setRawGeminiDataArray] = useState<ASOData[]>([]);
 
   // Load saved excel on mount
   useEffect(() => {
@@ -54,8 +54,8 @@ const App: React.FC = () => {
 
   const reset = () => {
     setAppState(AppState.IDLE);
-    setValidationResult(null);
-    setRawGeminiData(null);
+    setValidationResults([]);
+    setRawGeminiDataArray([]);
     setStatusMessage("");
     setAsoPdfs([]); // Clear previous PDFs
   };
@@ -170,8 +170,8 @@ const App: React.FC = () => {
       }
 
       // After processing all PDFs, set state
-      setValidationResult(results[0]); // show first result initially
-      setRawGeminiData(rawDataArray[0]); // show first raw data initially
+      setValidationResults(results);
+      setRawGeminiDataArray(rawDataArray);
       setAppState(AppState.SUCCESS);
       return;
 
@@ -375,94 +375,95 @@ const App: React.FC = () => {
         </div>
 
         {/* Results Section */}
-        {
-          appState === AppState.SUCCESS && validationResult && (
-            <div className="mt-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-              <div className="flex items-center justify-between mb-6">
-                <h2 className="text-2xl font-bold text-slate-800">Validation Results</h2>
-                <div className="text-sm text-slate-500">
-                  Comparing <span className="font-semibold text-slate-700">{asoPdfs.length} PDF(s)</span> vs Database
+        {appState === AppState.SUCCESS && validationResults.length > 0 && (
+          <div className="mt-8 space-y-8">
+            {validationResults.map((validationResult, fileIndex) => (
+              <div key={fileIndex} className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="flex items-center justify-between mb-6">
+                  <h2 className="text-2xl font-bold text-slate-800">Validation Results - File {fileIndex + 1}</h2>
+                  <div className="text-sm text-slate-500">
+                    <span className="font-semibold text-slate-700">{asoPdfs[fileIndex]?.name || `File ${fileIndex + 1}`}</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {/* 1. Name Validation */}
+                  <ResultCard
+                    title="Employee Name"
+                    status={validationResult.nome.ok ? "success" : "error"}
+                    message={validationResult.nome.msg}
+                    details={[
+                      { label: "PDF", value: validationResult.nome.pdfVal },
+                      { label: "Base", value: validationResult.nome.baseVal }
+                    ]}
+                  />
+
+                  {/* 2. CPF Validation */}
+                  <ResultCard
+                    title="CPF Document"
+                    status={validationResult.cpf.ok ? "success" : "error"}
+                    message={validationResult.cpf.msg}
+                    details={[
+                      { label: "PDF", value: validationResult.cpf.pdfVal },
+                      { label: "Base", value: validationResult.cpf.baseVal }
+                    ]}
+                  />
+
+                  {/* 3. Role Validation */}
+                  <ResultCard
+                    title="Job Role / Cargo"
+                    status={validationResult.cargo.ok ? "success" : "error"}
+                    message={validationResult.cargo.msg}
+                    details={[
+                      { label: "PDF", value: validationResult.cargo.pdfVal },
+                      { label: "Base", value: validationResult.cargo.baseVal }
+                    ]}
+                  />
+
+                  {/* 4. Aptitude Flags */}
+                  <ResultCard
+                    title="Health Aptitude"
+                    status={validationResult.aptidao.ok ? "success" : "error"}
+                    message={validationResult.aptidao.ok ? "Fully Fit / Apto" : "Unfit / Inapto Detected"}
+                    details={!validationResult.aptidao.ok ? validationResult.aptidao.failedFields.map(f => ({ label: "Issue", value: f })) : undefined}
+                  />
+
+                  {/* 5. Signatures */}
+                  <div className="col-span-1 md:col-span-2 grid grid-cols-3 gap-4">
+                    <ResultCard
+                      title="Physician Sign."
+                      status={validationResult.assinaturas.medico ? "success" : "error"}
+                      message={validationResult.assinaturas.medico ? "Detected" : "Missing"}
+                    />
+                    <ResultCard
+                      title="Employee Sign."
+                      status={validationResult.assinaturas.tecnico ? "success" : "error"}
+                      message={validationResult.assinaturas.tecnico ? "Detected" : "Missing"}
+                    />
+                    <ResultCard
+                      title="Date Field"
+                      status={validationResult.assinaturas.data.valid ? "success" : "error"}
+                      message={validationResult.assinaturas.data.msg}
+                    />
+                  </div>
+                </div>
+
+                {/* Raw Data Toggle (Optional) */}
+                <div className="mt-8 border-t pt-6">
+                  <details className="group">
+                    <summary className="flex items-center gap-2 cursor-pointer text-slate-500 hover:text-blue-600 transition-colors">
+                      <Database className="w-4 h-4" />
+                      <span className="text-sm font-medium">View Raw Extracted Data (JSON)</span>
+                    </summary>
+                    <pre className="mt-4 p-4 bg-slate-900 text-slate-50 rounded-lg overflow-auto text-xs font-mono max-h-60">
+                      {JSON.stringify(rawGeminiDataArray[fileIndex], null, 2)}
+                    </pre>
+                  </details>
                 </div>
               </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-
-                {/* 1. Name Validation */}
-                <ResultCard
-                  title="Employee Name"
-                  status={validationResult.nome.ok ? "success" : "error"}
-                  message={validationResult.nome.msg}
-                  details={[
-                    { label: "PDF", value: validationResult.nome.pdfVal },
-                    { label: "Base", value: validationResult.nome.baseVal }
-                  ]}
-                />
-
-                {/* 2. CPF Validation */}
-                <ResultCard
-                  title="CPF Document"
-                  status={validationResult.cpf.ok ? "success" : "error"}
-                  message={validationResult.cpf.msg}
-                  details={[
-                    { label: "PDF", value: validationResult.cpf.pdfVal },
-                    { label: "Base", value: validationResult.cpf.baseVal }
-                  ]}
-                />
-
-                {/* 3. Role Validation */}
-                <ResultCard
-                  title="Job Role / Cargo"
-                  status={validationResult.cargo.ok ? "success" : "error"}
-                  message={validationResult.cargo.msg}
-                  details={[
-                    { label: "PDF", value: validationResult.cargo.pdfVal },
-                    { label: "Base", value: validationResult.cargo.baseVal }
-                  ]}
-                />
-
-                {/* 4. Aptitude Flags */}
-                <ResultCard
-                  title="Health Aptitude"
-                  status={validationResult.aptidao.ok ? "success" : "error"}
-                  message={validationResult.aptidao.ok ? "Fully Fit / Apto" : "Unfit / Inapto Detected"}
-                  details={!validationResult.aptidao.ok ? validationResult.aptidao.failedFields.map(f => ({ label: "Issue", value: f })) : undefined}
-                />
-
-                {/* 5. Signatures */}
-                <div className="col-span-1 md:col-span-2 grid grid-cols-3 gap-4">
-                  <ResultCard
-                    title="Physician Sign."
-                    status={validationResult.assinaturas.medico ? "success" : "error"}
-                    message={validationResult.assinaturas.medico ? "Detected" : "Missing"}
-                  />
-                  <ResultCard
-                    title="Employee Sign."
-                    status={validationResult.assinaturas.tecnico ? "success" : "error"}
-                    message={validationResult.assinaturas.tecnico ? "Detected" : "Missing"}
-                  />
-                  <ResultCard
-                    title="Date Field"
-                    status={validationResult.assinaturas.data.valid ? "success" : "error"}
-                    message={validationResult.assinaturas.data.msg}
-                  />
-                </div>
-              </div>
-
-              {/* Raw Data Toggle (Optional) */}
-              <div className="mt-12 border-t pt-8">
-                <details className="group">
-                  <summary className="flex items-center gap-2 cursor-pointer text-slate-500 hover:text-blue-600 transition-colors">
-                    <Database className="w-4 h-4" />
-                    <span className="text-sm font-medium">View Raw Extracted Data (JSON)</span>
-                  </summary>
-                  <pre className="mt-4 p-4 bg-slate-900 text-slate-50 rounded-lg overflow-auto text-xs font-mono max-h-60">
-                    {JSON.stringify(rawGeminiData, null, 2)}
-                  </pre>
-                </details>
-              </div>
-            </div>
-          )
-        }
+            ))}
+          </div>
+        )}
 
         {
           appState === AppState.ERROR && (
