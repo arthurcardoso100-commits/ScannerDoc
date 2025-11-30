@@ -7,10 +7,11 @@ interface FileUploadProps {
     files: File[];
     onFilesChange: (files: File[]) => void;
     multiple?: boolean;
+    showList?: boolean;
     icon?: React.ReactNode;
 }
 
-export const FileUpload: React.FC<FileUploadProps> = ({ label, accept, files, onFilesChange, multiple = false, icon }) => {
+export const FileUpload: React.FC<FileUploadProps> = ({ label, accept, files, onFilesChange, multiple = false, showList = true, icon }) => {
     const inputRef = useRef<HTMLInputElement>(null);
 
     const handleDrop = (e: React.DragEvent) => {
@@ -78,7 +79,7 @@ export const FileUpload: React.FC<FileUploadProps> = ({ label, accept, files, on
             </div>
 
             {/* File List */}
-            {files.length > 0 && (
+            {showList && files.length > 0 && (
                 <div className={`flex flex-col gap-2 ${multiple ? 'mt-4' : ''}`}>
                     {files.map((file, index) => (
                         <div key={`${file.name}-${index}`} className="relative bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-3 animate-in fade-in slide-in-from-top-2 duration-300">

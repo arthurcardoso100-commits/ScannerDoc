@@ -13,7 +13,7 @@ const App: React.FC = () => {
   // Inputs
   const [asoPdfs, setAsoPdfs] = useState<File[]>([]);
   const [excelFile, setExcelFile] = useState<File | null>(null);
-  const [initials, setInitials] = useState("");
+  const [fileInitials, setFileInitials] = useState<Record<string, string>>({});
   const [isExcelSaved, setIsExcelSaved] = useState(false);
 
   // State
@@ -61,8 +61,8 @@ const App: React.FC = () => {
   };
 
   const handleProcess = async () => {
-    if (asoPdfs.length === 0 || !excelFile || !initials) {
-      alert("Please fill in all fields.");
+    if (asoPdfs.length === 0 || !excelFile) {
+      alert("Please upload Excel and at least one PDF.");
       return;
     }
 
@@ -85,10 +85,13 @@ const App: React.FC = () => {
         let excelData = await findEmployeeByCPF(excelFile, pdfData.cpf);
         // Fallback to initials (search code) if not found by CPF
         if (!excelData) {
-          excelData = await parseExcelAndFindEmployee(excelFile, initials);
+          const specificInitials = fileInitials[pdfFile.name] || "";
+          if (specificInitials) {
+            excelData = await parseExcelAndFindEmployee(excelFile, specificInitials);
+          }
         }
         if (!excelData) {
-          throw new Error(`Employee not found in Excel for PDF ${pdfFile.name}.`);
+          throw new Error(`Employee not found in Excel for PDF ${pdfFile.name}. Check CPF or Initials.`);
         }
 
         // Validate data for this PDF
@@ -266,22 +269,12 @@ const App: React.FC = () => {
                   )}
                 </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-slate-700">Initials (Column C)</label>
-                  <div className="relative">
-                    <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-                    <input
-                      type="text"
-                      value={initials}
-                      onChange={(e) => setInitials(e.target.value)}
-                      placeholder="e.g. BR001"
-                      className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm uppercase"
-                    />
-                  </div>
-                </div>
               </div>
+
+              {/* Removed global initials input */}
             </div>
           </div>
+
 
           {/* Center Column: PDF Upload */}
           <div className="lg:col-span-2 flex flex-col h-full">
@@ -297,7 +290,57 @@ const App: React.FC = () => {
                   files={asoPdfs}
                   onFilesChange={setAsoPdfs}
                   multiple={true}
+                  showList={false}
                 />
+
+                {/* Custom File List with Initials Input */}
+                {asoPdfs.length > 0 && (
+                  <div className="mt-6 space-y-3">
+                    <h3 className="text-sm font-medium text-slate-700">Selected Files</h3>
+                    {asoPdfs.map((file, index) => (
+                      <div key={`${file.name}-${index}`} className="bg-slate-50 border border-slate-200 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center gap-4 animate-in fade-in slide-in-from-top-2 duration-300">
+                        <div className="flex-1 min-w-0 flex items-center gap-3">
+                          <div className="bg-blue-100 p-2 rounded-md">
+                            <FileText className="w-5 h-5 text-blue-600" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium text-slate-900 truncate">{file.name}</p>
+                            <p className="text-xs text-slate-500">{(file.size / 1024).toFixed(1)} KB</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-3 w-full sm:w-auto">
+                          <div className="relative flex-1 sm:w-40">
+                            <div className="absolute inset-y-0 left-0 pl-2 flex items-center pointer-events-none">
+                              <Search className="h-3 w-3 text-slate-400" />
+                            </div>
+                            <input
+                              type="text"
+                              value={fileInitials[file.name] || ""}
+                              onChange={(e) => setFileInitials(prev => ({ ...prev, [file.name]: e.target.value }))}
+                              placeholder="Initials"
+                              className="block w-full pl-7 pr-2 py-1.5 text-xs border border-slate-300 rounded-md focus:ring-blue-500 focus:border-blue-500 uppercase"
+                            />
+                          </div>
+                          <button
+                            onClick={() => {
+                              const newFiles = [...asoPdfs];
+                              newFiles.splice(index, 1);
+                              setAsoPdfs(newFiles);
+                              const newInitials = { ...fileInitials };
+                              delete newInitials[file.name];
+                              setFileInitials(newInitials);
+                            }}
+                            className="p-1.5 hover:bg-red-100 rounded-full text-slate-400 hover:text-red-500 transition-colors"
+                            title="Remove file"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="mt-6 pt-6 border-t border-slate-100">
@@ -332,107 +375,111 @@ const App: React.FC = () => {
         </div>
 
         {/* Results Section */}
-        {appState === AppState.SUCCESS && validationResult && (
-          <div className="mt-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="flex items-center justify-between mb-6">
-              <h2 className="text-2xl font-bold text-slate-800">Validation Results</h2>
-              <div className="text-sm text-slate-500">
-                Comparing <span className="font-semibold text-slate-700">{asoPdfs.length} PDF(s)</span> vs Database
+        {
+          appState === AppState.SUCCESS && validationResult && (
+            <div className="mt-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-2xl font-bold text-slate-800">Validation Results</h2>
+                <div className="text-sm text-slate-500">
+                  Comparing <span className="font-semibold text-slate-700">{asoPdfs.length} PDF(s)</span> vs Database
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+                {/* 1. Name Validation */}
+                <ResultCard
+                  title="Employee Name"
+                  status={validationResult.nome.ok ? "success" : "error"}
+                  message={validationResult.nome.msg}
+                  details={[
+                    { label: "PDF", value: validationResult.nome.pdfVal },
+                    { label: "Base", value: validationResult.nome.baseVal }
+                  ]}
+                />
+
+                {/* 2. CPF Validation */}
+                <ResultCard
+                  title="CPF Document"
+                  status={validationResult.cpf.ok ? "success" : "error"}
+                  message={validationResult.cpf.msg}
+                  details={[
+                    { label: "PDF", value: validationResult.cpf.pdfVal },
+                    { label: "Base", value: validationResult.cpf.baseVal }
+                  ]}
+                />
+
+                {/* 3. Role Validation */}
+                <ResultCard
+                  title="Job Role / Cargo"
+                  status={validationResult.cargo.ok ? "success" : "error"}
+                  message={validationResult.cargo.msg}
+                  details={[
+                    { label: "PDF", value: validationResult.cargo.pdfVal },
+                    { label: "Base", value: validationResult.cargo.baseVal }
+                  ]}
+                />
+
+                {/* 4. Aptitude Flags */}
+                <ResultCard
+                  title="Health Aptitude"
+                  status={validationResult.aptidao.ok ? "success" : "error"}
+                  message={validationResult.aptidao.ok ? "Fully Fit / Apto" : "Unfit / Inapto Detected"}
+                  details={!validationResult.aptidao.ok ? validationResult.aptidao.failedFields.map(f => ({ label: "Issue", value: f })) : undefined}
+                />
+
+                {/* 5. Signatures */}
+                <div className="col-span-1 md:col-span-2 grid grid-cols-3 gap-4">
+                  <ResultCard
+                    title="Physician Sign."
+                    status={validationResult.assinaturas.medico ? "success" : "error"}
+                    message={validationResult.assinaturas.medico ? "Detected" : "Missing"}
+                  />
+                  <ResultCard
+                    title="Employee Sign."
+                    status={validationResult.assinaturas.tecnico ? "success" : "error"}
+                    message={validationResult.assinaturas.tecnico ? "Detected" : "Missing"}
+                  />
+                  <ResultCard
+                    title="Date Field"
+                    status={validationResult.assinaturas.data.valid ? "success" : "error"}
+                    message={validationResult.assinaturas.data.msg}
+                  />
+                </div>
+              </div>
+
+              {/* Raw Data Toggle (Optional) */}
+              <div className="mt-12 border-t pt-8">
+                <details className="group">
+                  <summary className="flex items-center gap-2 cursor-pointer text-slate-500 hover:text-blue-600 transition-colors">
+                    <Database className="w-4 h-4" />
+                    <span className="text-sm font-medium">View Raw Extracted Data (JSON)</span>
+                  </summary>
+                  <pre className="mt-4 p-4 bg-slate-900 text-slate-50 rounded-lg overflow-auto text-xs font-mono max-h-60">
+                    {JSON.stringify(rawGeminiData, null, 2)}
+                  </pre>
+                </details>
               </div>
             </div>
+          )
+        }
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-
-              {/* 1. Name Validation */}
-              <ResultCard
-                title="Employee Name"
-                status={validationResult.nome.ok ? "success" : "error"}
-                message={validationResult.nome.msg}
-                details={[
-                  { label: "PDF", value: validationResult.nome.pdfVal },
-                  { label: "Base", value: validationResult.nome.baseVal }
-                ]}
-              />
-
-              {/* 2. CPF Validation */}
-              <ResultCard
-                title="CPF Document"
-                status={validationResult.cpf.ok ? "success" : "error"}
-                message={validationResult.cpf.msg}
-                details={[
-                  { label: "PDF", value: validationResult.cpf.pdfVal },
-                  { label: "Base", value: validationResult.cpf.baseVal }
-                ]}
-              />
-
-              {/* 3. Role Validation */}
-              <ResultCard
-                title="Job Role / Cargo"
-                status={validationResult.cargo.ok ? "success" : "error"}
-                message={validationResult.cargo.msg}
-                details={[
-                  { label: "PDF", value: validationResult.cargo.pdfVal },
-                  { label: "Base", value: validationResult.cargo.baseVal }
-                ]}
-              />
-
-              {/* 4. Aptitude Flags */}
-              <ResultCard
-                title="Health Aptitude"
-                status={validationResult.aptidao.ok ? "success" : "error"}
-                message={validationResult.aptidao.ok ? "Fully Fit / Apto" : "Unfit / Inapto Detected"}
-                details={!validationResult.aptidao.ok ? validationResult.aptidao.failedFields.map(f => ({ label: "Issue", value: f })) : undefined}
-              />
-
-              {/* 5. Signatures */}
-              <div className="col-span-1 md:col-span-2 grid grid-cols-3 gap-4">
-                <ResultCard
-                  title="Physician Sign."
-                  status={validationResult.assinaturas.medico ? "success" : "error"}
-                  message={validationResult.assinaturas.medico ? "Detected" : "Missing"}
-                />
-                <ResultCard
-                  title="Employee Sign."
-                  status={validationResult.assinaturas.tecnico ? "success" : "error"}
-                  message={validationResult.assinaturas.tecnico ? "Detected" : "Missing"}
-                />
-                <ResultCard
-                  title="Date Field"
-                  status={validationResult.assinaturas.data.valid ? "success" : "error"}
-                  message={validationResult.assinaturas.data.msg}
-                />
-              </div>
+        {
+          appState === AppState.ERROR && (
+            <div className="mt-8 p-6 bg-red-50 border border-red-200 rounded-xl text-center">
+              <h3 className="text-lg font-bold text-red-700 mb-2">Process Failed</h3>
+              <p className="text-red-600 mb-4">{statusMessage}</p>
+              <button
+                onClick={() => setAppState(AppState.IDLE)}
+                className="px-4 py-2 bg-white border border-red-300 text-red-700 rounded-md hover:bg-red-50 transition-colors"
+              >
+                Try Again
+              </button>
             </div>
-
-            {/* Raw Data Toggle (Optional) */}
-            <div className="mt-12 border-t pt-8">
-              <details className="group">
-                <summary className="flex items-center gap-2 cursor-pointer text-slate-500 hover:text-blue-600 transition-colors">
-                  <Database className="w-4 h-4" />
-                  <span className="text-sm font-medium">View Raw Extracted Data (JSON)</span>
-                </summary>
-                <pre className="mt-4 p-4 bg-slate-900 text-slate-50 rounded-lg overflow-auto text-xs font-mono max-h-60">
-                  {JSON.stringify(rawGeminiData, null, 2)}
-                </pre>
-              </details>
-            </div>
-          </div>
-        )}
-
-        {appState === AppState.ERROR && (
-          <div className="mt-8 p-6 bg-red-50 border border-red-200 rounded-xl text-center">
-            <h3 className="text-lg font-bold text-red-700 mb-2">Process Failed</h3>
-            <p className="text-red-600 mb-4">{statusMessage}</p>
-            <button
-              onClick={() => setAppState(AppState.IDLE)}
-              className="px-4 py-2 bg-white border border-red-300 text-red-700 rounded-md hover:bg-red-50 transition-colors"
-            >
-              Try Again
-            </button>
-          </div>
-        )}
-      </main>
-    </div>
+          )
+        }
+      </main >
+    </div >
   );
 };
 
