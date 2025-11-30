@@ -3,17 +3,17 @@ import { FileText, Database, Search, Play, RotateCcw, Save, Trash2 } from "lucid
 import { FileUpload } from "./components/FileUpload";
 import { ResultCard } from "./components/ResultCard";
 import { processASOWithGemini } from "./services/geminiService";
-import { parseExcelAndFindEmployee } from "./services/excelService";
+import { parseExcelAndFindEmployee, findEmployeeByCPF } from "./services/excelService";
 import { saveExcelFile, getExcelFile, clearExcelFile } from "./services/storageService";
 import { normalizeText, normalizeNumber, normalizeCargo, parseDateString } from "./utils/normalization";
 import { AppState } from "./types";
-import type { ASOData, ExcelData, ValidationResult } from "./types";
+import type { ASOData, ValidationResult } from "./types";
 
 const App: React.FC = () => {
   // Inputs
-  const [asoPdf, setAsoPdf] = useState<File | null>(null);
+  const [asoPdfs, setAsoPdfs] = useState<File[]>([]);
   const [excelFile, setExcelFile] = useState<File | null>(null);
-  const [employeeCode, setEmployeeCode] = useState("");
+  const [initials, setInitials] = useState("");
   const [isExcelSaved, setIsExcelSaved] = useState(false);
 
   // State
@@ -57,11 +57,11 @@ const App: React.FC = () => {
     setValidationResult(null);
     setRawGeminiData(null);
     setStatusMessage("");
-    setAsoPdf(null); // Clear previous PDF
+    setAsoPdfs([]); // Clear previous PDFs
   };
 
   const handleProcess = async () => {
-    if (!asoPdf || !excelFile || !employeeCode) {
+    if (asoPdfs.length === 0 || !excelFile || !initials) {
       alert("Please fill in all fields.");
       return;
     }
@@ -71,27 +71,121 @@ const App: React.FC = () => {
 
       // 1. Process Excel
       setStatusMessage("Scanning Excel database...");
-      const excelData = await parseExcelAndFindEmployee(excelFile, employeeCode);
+      // First try to find by CPF after processing each PDF
+      const results: ValidationResult[] = [];
+      const rawDataArray: ASOData[] = [];
 
-      if (!excelData) {
-        throw new Error(`Employee code '${employeeCode}' not found in the Excel file.`);
+      for (const pdfFile of asoPdfs) {
+        // Process PDF with Gemini
+        setStatusMessage(`Analyzing PDF ${pdfFile.name} with Gemini AI...`);
+        const pdfData = await processASOWithGemini(import.meta.env.VITE_API_KEY, pdfFile);
+        rawDataArray.push(pdfData);
+
+        // Try to find employee by CPF from Excel
+        let excelData = await findEmployeeByCPF(excelFile, pdfData.cpf);
+        // Fallback to initials (search code) if not found by CPF
+        if (!excelData) {
+          excelData = await parseExcelAndFindEmployee(excelFile, initials);
+        }
+        if (!excelData) {
+          throw new Error(`Employee not found in Excel for PDF ${pdfFile.name}.`);
+        }
+
+        // Validate data for this PDF
+        const result = (() => {
+          const pdfNameNorm = normalizeText(pdfData.nome);
+          const pdfCpfNorm = normalizeNumber(pdfData.cpf);
+          const pdfCargoNorm = normalizeCargo(pdfData.cargo);
+
+          const baseNameNorm = normalizeText(excelData.nome);
+          const baseCpfNorm = normalizeNumber(excelData.cpf);
+          const baseCargoNorm = normalizeCargo(excelData.cargo);
+
+          const aptFlags = pdfData.aptidoes;
+          const aptitudeErrors: string[] = [];
+          if (!aptFlags.funcao) aptitudeErrors.push("Inapto: Função");
+          if (!aptFlags.altura) aptitudeErrors.push("Inapto: Altura");
+          if (!aptFlags.espacoConfinado) aptitudeErrors.push("Inapto: Espaço Confinado");
+          if (!aptFlags.eletricidade) aptitudeErrors.push("Inapto: Eletricidade");
+
+          // Date validation
+          let dateValid = false;
+          let dateMsg = "Date missing or not found";
+          const rawDate = pdfData.assinaturas.data;
+          if (rawDate) {
+            const parsedDate = parseDateString(rawDate);
+            if (parsedDate) {
+              const today = new Date();
+              const oneYearAgo = new Date();
+              oneYearAgo.setFullYear(today.getFullYear() - 1);
+              today.setHours(0, 0, 0, 0);
+              oneYearAgo.setHours(0, 0, 0, 0);
+              parsedDate.setHours(0, 0, 0, 0);
+              if (parsedDate >= oneYearAgo) {
+                dateValid = true;
+                dateMsg = `${rawDate}`;
+              } else {
+                dateMsg = `${rawDate} (Expired / Old)`;
+              }
+            } else {
+              dateMsg = `${rawDate} (Invalid Format)`;
+            }
+          }
+
+          return {
+            nome: {
+              ok: pdfNameNorm === baseNameNorm,
+              msg: pdfNameNorm === baseNameNorm ? "Match" : "Mismatch",
+              pdfVal: pdfData.nome || "(Empty)",
+              baseVal: excelData.nome,
+            },
+            cpf: {
+              ok: pdfCpfNorm === baseCpfNorm,
+              msg: pdfCpfNorm === baseCpfNorm ? "Match" : "Mismatch",
+              pdfVal: pdfData.cpf || "(Empty)",
+              baseVal: excelData.cpf,
+            },
+            cargo: {
+              ok: pdfCargoNorm === baseCargoNorm,
+              msg: pdfCargoNorm === baseCargoNorm ? "Match" : "Mismatch",
+              pdfVal: pdfData.cargo || "(Empty)",
+              baseVal: excelData.cargo,
+            },
+            aptidao: {
+              ok: aptitudeErrors.length === 0,
+              msg: aptitudeErrors.length === 0 ? "All Clear" : "Issues Found",
+              failedFields: aptitudeErrors,
+            },
+            assinaturas: {
+              medico: pdfData.assinaturas.medico,
+              tecnico: pdfData.assinaturas.tecnico,
+              data: { valid: dateValid, value: rawDate, msg: dateMsg },
+            },
+          } as ValidationResult;
+        })();
+        results.push(result);
       }
 
-      // 2. Process PDF with Gemini
-      setStatusMessage("Analyzing PDF with Gemini AI...");
-      // Use import.meta.env.VITE_API_KEY for Vite
-      const apiKey = import.meta.env.VITE_API_KEY;
-      if (!apiKey) {
-        throw new Error("API Key not found. Please set VITE_API_KEY in .env file.");
-      }
-      const pdfData = await processASOWithGemini(apiKey, asoPdf);
-      setRawGeminiData(pdfData);
-
-      // 3. Validation Logic
-      setStatusMessage("Validating data...");
-      validateData(pdfData, excelData);
-
+      // After processing all PDFs, set state
+      setValidationResult(results[0]); // show first result initially
+      setRawGeminiData(rawDataArray[0]); // show first raw data initially
       setAppState(AppState.SUCCESS);
+      return;
+
+
+      // NOTE: Legacy single-PDF processing code retained for reference but not used in batch mode.
+      /*
+        setStatusMessage("Analyzing PDF with Gemini AI...");
+        const apiKey = import.meta.env.VITE_API_KEY;
+        if (!apiKey) {
+          throw new Error("API Key not found. Please set VITE_API_KEY in .env file.");
+        }
+        const pdfData = await processASOWithGemini(apiKey, asoPdf);
+        setRawGeminiData(pdfData);
+      
+        setStatusMessage("Validating data...");
+        validateData(pdfData, excelData);
+      */
     } catch (error: any) {
       console.error(error);
       setAppState(AppState.ERROR);
@@ -99,89 +193,7 @@ const App: React.FC = () => {
     }
   };
 
-  const validateData = (pdf: ASOData, excel: ExcelData) => {
-    const pdfNameNorm = normalizeText(pdf.nome);
-    const pdfCpfNorm = normalizeNumber(pdf.cpf);
-    const pdfCargoNorm = normalizeCargo(pdf.cargo);
 
-    const baseNameNorm = normalizeText(excel.nome);
-    const baseCpfNorm = normalizeNumber(excel.cpf);
-    const baseCargoNorm = normalizeCargo(excel.cargo);
-
-    // Aptitude Logic
-    const aptFlags = pdf.aptidoes;
-    const aptitudeErrors: string[] = [];
-    if (!aptFlags.funcao) aptitudeErrors.push("Inapto: Função");
-    if (!aptFlags.altura) aptitudeErrors.push("Inapto: Altura");
-    if (!aptFlags.espacoConfinado) aptitudeErrors.push("Inapto: Espaço Confinado");
-    if (!aptFlags.eletricidade) aptitudeErrors.push("Inapto: Eletricidade");
-
-    // Date Validation Logic
-    // Rule: Date must be within the last 1 year from today.
-    let dateValid = false;
-    let dateMsg = "Date missing or not found";
-    const rawDate = pdf.assinaturas.data;
-
-    if (rawDate) {
-      const parsedDate = parseDateString(rawDate);
-      if (parsedDate) {
-        const today = new Date();
-        const oneYearAgo = new Date();
-        oneYearAgo.setFullYear(today.getFullYear() - 1);
-
-        // Reset time for fair date comparison
-        today.setHours(0, 0, 0, 0);
-        oneYearAgo.setHours(0, 0, 0, 0);
-        parsedDate.setHours(0, 0, 0, 0);
-
-        if (parsedDate >= oneYearAgo) {
-          dateValid = true;
-          dateMsg = `${rawDate}`;
-        } else {
-          dateMsg = `${rawDate} (Expired / Old)`;
-        }
-      } else {
-        dateMsg = `${rawDate} (Invalid Format)`;
-      }
-    }
-
-    const result: ValidationResult = {
-      nome: {
-        ok: pdfNameNorm === baseNameNorm,
-        msg: pdfNameNorm === baseNameNorm ? "Match" : "Mismatch",
-        pdfVal: pdf.nome || "(Empty)",
-        baseVal: excel.nome,
-      },
-      cpf: {
-        ok: pdfCpfNorm === baseCpfNorm,
-        msg: pdfCpfNorm === baseCpfNorm ? "Match" : "Mismatch",
-        pdfVal: pdf.cpf || "(Empty)",
-        baseVal: excel.cpf,
-      },
-      cargo: {
-        ok: pdfCargoNorm === baseCargoNorm,
-        msg: pdfCargoNorm === baseCargoNorm ? "Match" : "Mismatch",
-        pdfVal: pdf.cargo || "(Empty)",
-        baseVal: excel.cargo,
-      },
-      aptidao: {
-        ok: aptitudeErrors.length === 0,
-        msg: aptitudeErrors.length === 0 ? "All Clear" : "Issues Found",
-        failedFields: aptitudeErrors,
-      },
-      assinaturas: {
-        medico: pdf.assinaturas.medico,
-        tecnico: pdf.assinaturas.tecnico,
-        data: {
-          valid: dateValid,
-          value: rawDate,
-          msg: dateMsg
-        }
-      },
-    };
-
-    setValidationResult(result);
-  };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 pb-20">
@@ -248,13 +260,13 @@ const App: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Employee Code (Column C)</label>
+                  <label className="block text-sm font-medium text-slate-700">Initials (Column C)</label>
                   <div className="relative">
                     <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
                     <input
                       type="text"
-                      value={employeeCode}
-                      onChange={(e) => setEmployeeCode(e.target.value)}
+                      value={initials}
+                      onChange={(e) => setInitials(e.target.value)}
                       placeholder="e.g. BR001"
                       className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm uppercase"
                     />
@@ -275,8 +287,8 @@ const App: React.FC = () => {
                 <FileUpload
                   label="Upload ASO (PDF)"
                   accept=".pdf"
-                  file={asoPdf}
-                  onFileSelect={setAsoPdf}
+                  file={asoPdfs[0] || null}
+                  onFileSelect={(file) => setAsoPdfs(prev => [...prev, file])}
                 />
               </div>
 
@@ -317,7 +329,7 @@ const App: React.FC = () => {
             <div className="flex items-center justify-between mb-6">
               <h2 className="text-2xl font-bold text-slate-800">Validation Results</h2>
               <div className="text-sm text-slate-500">
-                Comparing <span className="font-semibold text-slate-700">{asoPdf?.name}</span> vs Database
+                Comparing <span className="font-semibold text-slate-700">{asoPdfs.length} PDF(s)</span> vs Database
               </div>
             </div>
 
