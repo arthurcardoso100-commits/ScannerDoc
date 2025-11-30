@@ -25,7 +25,7 @@ export const processASOWithGemini = async (apiKey: string, file: File): Promise<
     try {
         // This is just for debugging in the console
         const modelList = await genAI.getGenerativeModel({ model: "gemini-1.5-pro" }).countTokens("test");
-        console.log("API Connection OK");
+        console.log("API Connection OK, token count test:", modelList);
     } catch (e) {
         console.warn("API Check failed", e);
     }
