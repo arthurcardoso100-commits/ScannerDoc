@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from "react";
-import { FileText, Database, Search, Play, RotateCcw, Save } from "lucide-react";
+import { FileText, Database, Search, Play, RotateCcw, Save, Trash2 } from "lucide-react";
 import { FileUpload } from "./components/FileUpload";
 import { ResultCard } from "./components/ResultCard";
 import { processASOWithGemini } from "./services/geminiService";
 import { parseExcelAndFindEmployee } from "./services/excelService";
-import { saveExcelFile, getExcelFile } from "./services/storageService";
+import { saveExcelFile, getExcelFile, clearExcelFile } from "./services/storageService";
 import { normalizeText, normalizeNumber, normalizeCargo, parseDateString } from "./utils/normalization";
 import { AppState } from "./types";
 import type { ASOData, ExcelData, ValidationResult } from "./types";
@@ -41,6 +41,14 @@ const App: React.FC = () => {
       await saveExcelFile(file);
     } catch (e) {
       console.error("Failed to auto-save excel", e);
+    }
+  };
+
+  const handleClearDatabase = async () => {
+    if (confirm("Are you sure you want to clear the saved Excel database?")) {
+      await clearExcelFile();
+      setExcelFile(null);
+      setIsExcelSaved(false);
     }
   };
 
@@ -227,6 +235,15 @@ const App: React.FC = () => {
                       <Save className="w-3 h-3" />
                       Saved to browser storage
                     </div>
+                  )}
+                  {isExcelSaved && (
+                    <button
+                      onClick={handleClearDatabase}
+                      className="mt-3 flex items-center gap-2 text-xs text-red-500 hover:text-red-700 transition-colors"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Clear Database
+                    </button>
                   )}
                 </div>
 

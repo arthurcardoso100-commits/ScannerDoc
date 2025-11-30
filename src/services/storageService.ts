@@ -22,3 +22,8 @@ export const getExcelFile = async (): Promise<File | undefined> => {
     const db = await initDB();
     return db.get(STORE_NAME, 'excelFile');
 };
+
+export const clearExcelFile = async (): Promise<void> => {
+    const db = await initDB();
+    await db.delete(STORE_NAME, 'excelFile');
+};
