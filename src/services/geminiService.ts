@@ -14,9 +14,27 @@ const fileToBase64 = (file: File): Promise<string> => {
     });
 };
 
+// Debug function to list available models
+const listAvailableModels = async (apiKey: string) => {
+    try {
+        const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        if (!response.ok) {
+            console.error("Failed to list models:", await response.text());
+            return;
+        }
+        const data = await response.json();
+        console.log("Available Models for this key:", data.models?.map((m: any) => m.name));
+    } catch (e) {
+        console.error("Error listing models:", e);
+    }
+};
+
 export const processASOWithGemini = async (apiKey: string, file: File): Promise<ASOData> => {
     const cleanKey = apiKey.trim();
     console.log(`Using API Key: ${cleanKey.substring(0, 5)}...${cleanKey.substring(cleanKey.length - 3)}`);
+
+    // Check what models are actually visible to this key
+    await listAvailableModels(cleanKey);
 
     const genAI = new GoogleGenerativeAI(cleanKey);
     const base64Data = await fileToBase64(file);
