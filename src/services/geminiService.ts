@@ -15,7 +15,10 @@ const fileToBase64 = (file: File): Promise<string> => {
 };
 
 export const processASOWithGemini = async (apiKey: string, file: File): Promise<ASOData> => {
-    const genAI = new GoogleGenerativeAI(apiKey);
+    const cleanKey = apiKey.trim();
+    console.log(`Using API Key: ${cleanKey.substring(0, 5)}...${cleanKey.substring(cleanKey.length - 3)}`);
+
+    const genAI = new GoogleGenerativeAI(cleanKey);
     const base64Data = await fileToBase64(file);
 
     const prompt = `
@@ -44,7 +47,9 @@ export const processASOWithGemini = async (apiKey: string, file: File): Promise<
         "gemini-1.5-flash-002",
         "gemini-1.5-pro",
         "gemini-1.5-pro-001",
-        "gemini-1.5-pro-002"
+        "gemini-1.5-pro-002",
+        "gemini-pro", // Fallback to 1.0 Pro
+        "gemini-1.0-pro"
     ];
 
     let lastError: any;
