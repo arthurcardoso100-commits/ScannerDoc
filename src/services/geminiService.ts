@@ -1,3 +1,4 @@
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { ASOData } from '../types';
 
 const fileToBase64 = (file: File): Promise<string> => {
@@ -5,7 +6,6 @@ const fileToBase64 = (file: File): Promise<string> => {
         const reader = new FileReader();
         reader.onload = () => {
             const result = reader.result as string;
-            // Remove data URL prefix (e.g., "data:application/pdf;base64,")
             const base64 = result.split(',')[1];
             resolve(base64);
         };
@@ -15,6 +15,10 @@ const fileToBase64 = (file: File): Promise<string> => {
 };
 
 export const processASOWithGemini = async (apiKey: string, file: File): Promise<ASOData> => {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    // Using gemini-1.5-flash which is the current standard efficient model
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
     const base64Data = await fileToBase64(file);
 
     const prompt = `
@@ -36,33 +40,18 @@ export const processASOWithGemini = async (apiKey: string, file: File): Promise<
     Return ONLY the JSON object, no markdown formatting.
   `;
 
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-001:generateContent?key=${apiKey}`, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            contents: [{
-                parts: [
-                    { text: prompt },
-                    {
-                        inline_data: {
-                            mime_type: file.type,
-                            data: base64Data
-                        }
-                    }
-                ]
-            }]
-        })
-    });
+    const result = await model.generateContent([
+        prompt,
+        {
+            inlineData: {
+                data: base64Data,
+                mimeType: file.type
+            }
+        }
+    ]);
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Gemini API Error: ${response.status} ${response.statusText} - ${errorText}`);
-    }
-
-    const data = await response.json();
-    const textResponse = data.candidates[0].content.parts[0].text;
+    const response = await result.response;
+    const textResponse = response.text();
 
     // Clean up markdown code blocks if present
     const jsonString = textResponse.replace(/```json/g, '').replace(/```/g, '').trim();
