@@ -16,10 +16,19 @@ const fileToBase64 = (file: File): Promise<string> => {
 
 export const processASOWithGemini = async (apiKey: string, file: File): Promise<ASOData> => {
     const genAI = new GoogleGenerativeAI(apiKey);
-    // Using gemini-1.5-flash which is the current standard efficient model
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    // Trying gemini-1.5-pro as flash seems to be 404ing for this key
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-pro" });
 
     const base64Data = await fileToBase64(file);
+
+    // Debug: List models if possible to see what's available
+    try {
+        // This is just for debugging in the console
+        const modelList = await genAI.getGenerativeModel({ model: "gemini-1.5-pro" }).countTokens("test");
+        console.log("API Connection OK");
+    } catch (e) {
+        console.warn("API Check failed", e);
+    }
 
     const prompt = `
     Analyze this ASO (Occupational Health Certificate) document and extract the following information in JSON format:
