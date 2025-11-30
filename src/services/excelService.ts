@@ -12,22 +12,20 @@ export const parseExcelAndFindEmployee = async (file: File, employeeCode: string
                 const sheet = workbook.Sheets[sheetName];
                 const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
 
-                // Assuming Column C (index 2) is Employee Code
-                // Adjust indices based on actual Excel structure. 
-                // Let's assume:
-                // Col A: Name (Index 0)
-                // Col B: CPF (Index 1)
-                // Col C: Code (Index 2)
-                // Col D: Cargo (Index 3)
+                // User provided mapping:
+                // Col C (Index 2): Search Code
+                // Col K (Index 10): Name
+                // Col N (Index 13): CPF
+                // Col M (Index 12): Cargo
 
-                // Find row with matching code
+                // Find row with matching code (Column C / Index 2)
                 const row = jsonData.find((r) => r[2] && String(r[2]).trim().toUpperCase() === employeeCode.trim().toUpperCase());
 
                 if (row) {
                     const excelData: ExcelData = {
-                        nome: row[0],
-                        cpf: row[1],
-                        cargo: row[3],
+                        nome: row[10], // Column K
+                        cpf: row[13],  // Column N
+                        cargo: row[12], // Column M
                     };
                     resolve(excelData);
                 } else {
