@@ -135,6 +135,36 @@ const App: React.FC = () => {
             }
           }
 
+          // Risk validation
+          const requiredRisks = [
+            "Ruído contínuo ou intermitente",
+            "Temperaturas Anormais (calor)",
+            "Postura inadequada",
+            "Eletricidade",
+            "Eletricidade estática",
+            "Espaço confinado",
+            "Prensagem de mãos",
+            "Queda de diferentes níveis (acima de 2 metros)",
+            "Trânsito de veículos pesados"
+          ];
+
+          const normalizeRisk = (risk: string) => {
+            return risk.toLowerCase().trim().replace(/[.,;]/g, "");
+          };
+
+          const pdfRisksNormalized = (pdfData.riscos || []).map(normalizeRisk);
+          const missingRisks: string[] = [];
+
+          for (const required of requiredRisks) {
+            const requiredNorm = normalizeRisk(required);
+            const found = pdfRisksNormalized.some(pdfRisk =>
+              pdfRisk.includes(requiredNorm) || requiredNorm.includes(pdfRisk)
+            );
+            if (!found) {
+              missingRisks.push(required);
+            }
+          }
+
           return {
             nome: {
               ok: pdfNameNorm === baseNameNorm,
@@ -163,6 +193,11 @@ const App: React.FC = () => {
               medico: pdfData.assinaturas.medico,
               tecnico: pdfData.assinaturas.tecnico,
               data: { valid: dateValid, value: rawDate, msg: dateMsg },
+            },
+            riscos: {
+              ok: missingRisks.length === 0,
+              msg: missingRisks.length === 0 ? "All Risks Present" : `${missingRisks.length} Risk(s) Missing`,
+              missingRisks: missingRisks,
             },
           } as ValidationResult;
         })();
@@ -426,6 +461,14 @@ const App: React.FC = () => {
                     status={validationResult.aptidao.ok ? "success" : "error"}
                     message={validationResult.aptidao.ok ? "Fully Fit / Apto" : "Unfit / Inapto Detected"}
                     details={!validationResult.aptidao.ok ? validationResult.aptidao.failedFields.map(f => ({ label: "Issue", value: f })) : undefined}
+                  />
+
+                  {/* 5. Risks Validation */}
+                  <ResultCard
+                    title="Risks / Riscos"
+                    status={validationResult.riscos.ok ? "success" : "error"}
+                    message={validationResult.riscos.msg}
+                    details={validationResult.riscos.missingRisks.length > 0 ? validationResult.riscos.missingRisks.map(r => ({ label: "Missing", value: r })) : undefined}
                   />
 
                   {/* 5. Signatures */}

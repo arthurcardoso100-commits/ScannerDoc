@@ -22,6 +22,7 @@ export interface ASOData {
     tecnico: boolean;
     data: string;
   };
+  riscos: string[];
 }
 
 export interface ExcelData {
@@ -62,5 +63,10 @@ export interface ValidationResult {
       value: string;
       msg: string;
     };
+  };
+  riscos: {
+    ok: boolean;
+    msg: string;
+    missingRisks: string[];
   };
 }
