@@ -143,7 +143,7 @@ const App: React.FC = () => {
             "Eletricidade",
             "Eletricidade estática",
             "Espaço confinado",
-            "Prensagem de mãos",
+            "Prensamento de mãos",
             "Queda de diferentes níveis (acima de 2 metros)",
             "Trânsito de veículos pesados"
           ];

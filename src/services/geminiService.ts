@@ -96,7 +96,7 @@ export const processASOWithGemini = async (apiKey: string, file: File): Promise<
     - riscos: Array of strings containing all risks mentioned in the "Riscos" section. Extract each risk separately. Common risks include:
       - Físicos: "Ruído contínuo ou intermitente", "Temperaturas Anormais (calor)"
       - Ergonômicos: "Postura inadequada"
-      - Acidentes: "Eletricidade", "Eletricidade estática", "Espaço confinado", "Prensagem de mãos", "Queda de diferentes níveis (acima de 2 metros)", "Trânsito de veículos pesados"
+      - Acidentes: "Eletricidade", "Eletricidade estática", "Espaço confinado", "Prensamento de mãos", "Queda de diferentes níveis (acima de 2 metros)", "Trânsito de veículos pesados"
       Extract all risks found in the document, preserving their exact text.
 
     Return ONLY the JSON object, no markdown formatting.
